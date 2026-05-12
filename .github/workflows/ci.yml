@@ -1,0 +1,91 @@
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Go binaries
+    strategy:
+      matrix:
+        goos: [linux, darwin]
+        goarch: [amd64, arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Build MCP Server
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          output="hermes-browser-${{ matrix.goos }}-${{ matrix.goarch }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            output="${output}.exe"
+          fi
+          go build -o "dist/$output" -ldflags="-s -w" ./cmd/server/
+          echo "Built: dist/$output"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-browser-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/hermes-browser-${{ matrix.goos }}-${{ matrix.goarch }}
+          if-no-files-found: error
+
+  package-extension:
+    name: Package Chrome Extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package extension directory
+        run: |
+          mkdir -p dist
+          cd extension
+          zip -r ../dist/hermes-browser-extension.zip .
+          cd ..
+          echo "Packaged: dist/hermes-browser-extension.zip"
+
+      - name: Upload extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-browser-extension
+          path: dist/hermes-browser-extension.zip
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    if: github.event_name == 'release'
+    needs: [build, package-extension]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd artifacts
+          for dir in */; do
+            asset="${dir%/}"
+            file_path="${dir}$(ls "$dir")"
+            echo "Uploading: $file_path"
+            gh release upload ${{ github.event.release.tag_name }} "$file_path" --repo ${{ github.repository }} --clobber
+          done
