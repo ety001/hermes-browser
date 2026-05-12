@@ -1,13 +1,6 @@
-name: build
+name: release
 
 on:
-  push:
-    branches: [master]
-  pull_request:
-    branches: [master]
-  # Release published → builds binaries + extension, uploads to the Release.
-  # Create a Release on GitHub UI or via CLI:
-  #   gh release create v1.0.0 --title "v1.0.0" --notes "description"
   release:
     types: [published]
 
@@ -16,11 +9,22 @@ permissions:
 
 jobs:
   build:
-    name: Build Go binaries
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
     strategy:
       matrix:
-        goos: [linux, darwin]
-        goarch: [amd64, arm64]
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,21 +34,30 @@ jobs:
           go-version: '1.23'
           cache: true
 
-      - name: Cross-compile MCP Server
+      - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          mkdir -p dist
-          output="hermes-browser-${{ matrix.goos }}-${{ matrix.goarch }}"
-          go build -o "dist/$output" -ldflags="-s -w" ./cmd/server/
-          echo "Built: dist/$output"
+          ext=""
+          [ "${{ matrix.goos }}" = "windows" ] && ext=".exe"
+          binary="hermes-browser${ext}"
+          go build -o "$binary" -ldflags="-s -w" ./cmd/server/
 
-      - name: Upload binary
+      - name: Package tar.gz
+        run: |
+          ext=""
+          [ "${{ matrix.goos }}" = "windows" ] && ext=".exe"
+          binary="hermes-browser${ext}"
+          archive="hermes-browser-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
+          tar czf "$archive" "$binary" README.md
+          echo "Packaged: $archive"
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: hermes-browser-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/hermes-browser-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: hermes-browser-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
           if-no-files-found: error
 
   package-extension:
@@ -53,25 +66,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Package extension/
+      - name: Package extension
         run: |
-          mkdir -p dist
           cd extension
-          zip -r ../dist/hermes-browser-extension.zip .
-          echo "Packaged: dist/hermes-browser-extension.zip"
+          zip -r ../hermes-browser-extension.zip .
+          echo "Packaged: hermes-browser-extension.zip"
 
-      - name: Upload extension zip
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: hermes-browser-extension
-          path: dist/hermes-browser-extension.zip
+          path: hermes-browser-extension.zip
           if-no-files-found: error
 
-  # Only runs when a Release is published.
-  # Downloads artifacts built by the jobs above and attaches them to the Release.
   upload-release-assets:
     name: Upload Release Assets
-    if: github.event_name == 'release'
     needs: [build, package-extension]
     runs-on: ubuntu-latest
     steps:
@@ -82,12 +91,10 @@ jobs:
       - name: Attach assets to Release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          cd artifacts
-          for dir in */; do
-            asset_name="${dir%/}"
-            file_path="${dir}$(ls "$dir")"
-            echo "Uploading: $file_path → ${{ github.event.release.tag_name }}"
-            gh release upload "${{ github.event.release.tag_name }}" "$file_path" \
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) | while read file; do
+            echo "Uploading: $file → $RELEASE_TAG"
+            gh release upload "$RELEASE_TAG" "$file" \
               --repo "${{ github.repository }}" --clobber
           done
