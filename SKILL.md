@@ -86,11 +86,3 @@ asyncio.run(main())
    - 避免连续快速操作，两次操作之间至少间隔 0.5-1 秒
    - 如果不注意这一点，很容易被网站的反爬策略（如 Cloudflare、人机验证）拦截，导致访问失败
 
-## 内置 vs MCP 浏览器对比
-
-| | 内置 browser_* | MCP mcp_hermes_browser_* |
-|---|---|---|
-| 工具名 | browser_navigate, browser_click | mcp_hermes_browser_navigate（需 SDK 调用） |
-| 后端 | 本地 Playwright | 远程 MCP 服务 192.168.199.11:19875 |
-| 状态 | ❌ 缺系统库不可用 | ✅ 可用 |
-| 调用方式 | 直接调用 | execute_code + MCP SDK |
