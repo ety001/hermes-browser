@@ -5,6 +5,9 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  # Release published → builds binaries + extension, uploads to the Release.
+  # Create a Release on GitHub UI or via CLI:
+  #   gh release create v1.0.0 --title "v1.0.0" --notes "description"
   release:
     types: [published]
 
@@ -27,20 +30,17 @@ jobs:
           go-version: '1.23'
           cache: true
 
-      - name: Build MCP Server
+      - name: Cross-compile MCP Server
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
           mkdir -p dist
           output="hermes-browser-${{ matrix.goos }}-${{ matrix.goarch }}"
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            output="${output}.exe"
-          fi
           go build -o "dist/$output" -ldflags="-s -w" ./cmd/server/
           echo "Built: dist/$output"
 
-      - name: Upload binary artifact
+      - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: hermes-browser-${{ matrix.goos }}-${{ matrix.goarch }}
@@ -53,23 +53,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Package extension directory
+      - name: Package extension/
         run: |
           mkdir -p dist
           cd extension
           zip -r ../dist/hermes-browser-extension.zip .
-          cd ..
           echo "Packaged: dist/hermes-browser-extension.zip"
 
-      - name: Upload extension artifact
+      - name: Upload extension zip
         uses: actions/upload-artifact@v4
         with:
           name: hermes-browser-extension
           path: dist/hermes-browser-extension.zip
           if-no-files-found: error
 
-  release:
-    name: Create Release
+  # Only runs when a Release is published.
+  # Downloads artifacts built by the jobs above and attaches them to the Release.
+  upload-release-assets:
+    name: Upload Release Assets
     if: github.event_name == 'release'
     needs: [build, package-extension]
     runs-on: ubuntu-latest
@@ -78,14 +79,15 @@ jobs:
         with:
           path: artifacts
 
-      - name: Upload release assets
+      - name: Attach assets to Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd artifacts
           for dir in */; do
-            asset="${dir%/}"
+            asset_name="${dir%/}"
             file_path="${dir}$(ls "$dir")"
-            echo "Uploading: $file_path"
-            gh release upload ${{ github.event.release.tag_name }} "$file_path" --repo ${{ github.repository }} --clobber
+            echo "Uploading: $file_path → ${{ github.event.release.tag_name }}"
+            gh release upload "${{ github.event.release.tag_name }}" "$file_path" \
+              --repo "${{ github.repository }}" --clobber
           done
