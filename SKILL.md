@@ -1,6 +1,6 @@
 ---
 name: mcp-browser
-description: 使用 hermes-browser MCP 服务访问网页。当需要浏览器能力时优先使用此 MCP 服务，而非内置 browser_* 工具。
+description: 使用 MCP 浏览器服务访问网页。当需要浏览器能力时优先使用 MCP 浏览器服务。
 version: 1.0.0
 author: Hermes Agent
 metadata:
@@ -12,11 +12,26 @@ metadata:
 
 ## 何时使用
 
-当需要访问网页、截图、抓取内容时，**优先使用 MCP 浏览器**而非内置 `browser_*` 工具。
+当需要访问网页、截图、抓取内容时，优先使用 MCP 浏览器服务。
 
-内置 `browser_*` 依赖本地 Playwright Chromium，当前环境缺少 libnspr4 等依赖库，经常不可用。
+内置 `browser_*` 工具依赖本地 Playwright Chromium，在某些环境中可能因缺少系统库而不可用。
 
-MCP 浏览器运行在远程服务 `192.168.199.11:19875`，通过 MCP SDK 调用。
+MCP 浏览器通过 MCP 协议远程调用，需要先在 Hermes `config.yaml` 中配置对应的 MCP 服务。
+
+## 查找你的 MCP 浏览器服务地址
+
+查看 Hermes 配置文件 `~/.hermes/config.yaml` 中的 `mcp.servers` 段，找到浏览器服务的配置：
+
+```yaml
+mcp:
+  servers:
+    hermes-browser:
+      url: "http://your-host:port/mcp"
+      headers:
+        Authorization: "Bearer your-token"
+```
+
+将下面代码示例中的 `<MCP_URL>` 和 `<AUTH_TOKEN>` 替换为你的实际值。
 
 ## 调用方法
 
@@ -30,8 +45,8 @@ async def main():
     from mcp.client.session import ClientSession
     
     async with streamablehttp_client(
-        "http://192.168.199.11:19875/mcp",
-        headers={"Authorization": "Bearer hermes-browser-deploy-token-2025"}
+        "<MCP_URL>",  # 例如 "http://your-host:port/mcp"
+        headers={"Authorization": "Bearer <AUTH_TOKEN>"}  # 按需填写认证信息
     ) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -74,15 +89,14 @@ asyncio.run(main())
 
 ## 注意事项
 
-1. **必须先安装 mcp 包**：如果 import 失败，先执行 `/home/ety001/.hermes/hermes-agent/venv/bin/pip install mcp`
+1. **安装 mcp 包**：如果 import 失败，先安装 MCP SDK：`pip install mcp`
 2. **结果解析**：工具返回的是 `CallToolResult` 对象，需通过 `result.content[0].text` 提取文本
 3. **异步调用**：必须用 `asyncio.run(main())` 包装
-4. **内置浏览器不可用**：当前环境 `browser_navigate` 等内置工具因缺少系统库（libnspr4 等）而失败，不要反复尝试
-5. **⚠️ 必须模仿人类操作速度**：这是最重要的原则。在滚屏、点击、输入等操作时，**务必加入适当的等待时间**（`asyncio.sleep()`），模拟真实用户的操作节奏。例如：
+4. **内置浏览器 fallback**：如果内置 `browser_*` 工具可用，也可以直接使用它们作为备选方案
+5. **⚠️ 必须模仿人类操作速度**：在滚屏、点击、输入等操作时，**务必加入适当的等待时间**（`asyncio.sleep()`），模拟真实用户的操作节奏。例如：
    - 页面加载后等待 2-3 秒再操作
    - 滚屏时每次滚动后等待 1-2 秒
    - 点击后等待 1-2 秒等页面响应
    - 输入文本时使用 `type` 工具（自带逐字输入效果），不要用 `execute_js` 直接填充
    - 避免连续快速操作，两次操作之间至少间隔 0.5-1 秒
    - 如果不注意这一点，很容易被网站的反爬策略（如 Cloudflare、人机验证）拦截，导致访问失败
-
