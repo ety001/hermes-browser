@@ -45,8 +45,8 @@ async def main():
     from mcp.client.session import ClientSession
     
     async with streamablehttp_client(
-        "http://192.168.199.11:19875/mcp",
-        headers={"Authorization": "Bearer hermes-browser-deploy-token-2025"}
+        "<MCP_URL>",  # 例如 "http://your-host:port/mcp"
+        headers={"Authorization": "Bearer <AUTH_TOKEN>"}  # 按需填写认证信息
     ) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
