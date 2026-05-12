@@ -1,0 +1,28 @@
+# Hermes Browser MCP Server Configuration
+# Token (set a fixed value, or leave empty to auto-generate)
+# token: "change-me"
+
+# MCP Server HTTP transport
+server:
+  http:
+    bind: "0.0.0.0:19875"
+    # token: ""  # optional, overrides top-level token
+
+# WebSocket for Chrome Extension connection
+websocket:
+  bind: "127.0.0.1:19876"
+  # token: ""  # optional, overrides top-level token
+  # allowed_extensions: []  # Chrome Extension IDs for Origin whitelist
+
+# Browser operation defaults
+browser:
+  default_wait_until: "networkidle"
+  default_timeout: 30000
+  screenshot_format: "jpeg"
+  screenshot_quality: 80
+  max_content_length: 500000
+
+# Logging
+logging:
+  level: "info"
+  # file: ""  # log file path, empty = stderr

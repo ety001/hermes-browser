@@ -1,0 +1,22 @@
+# Hermes Browser — 部署配置 (192.168.199.11)
+# MCP HTTP 绑定 0.0.0.0 以便 Hermes 远程连接
+# WebSocket 绑定 127.0.0.1 仅 Chrome 本机连接
+
+token: "hermes-browser-deploy-token-2025"
+
+server:
+  http:
+    bind: "0.0.0.0:19875"
+
+websocket:
+  bind: "127.0.0.1:19876"
+
+browser:
+  default_wait_until: "networkidle"
+  default_timeout: 30000
+  screenshot_format: "jpeg"
+  screenshot_quality: 80
+  max_content_length: 500000
+
+logging:
+  level: "info"

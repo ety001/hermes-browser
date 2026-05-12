@@ -1,0 +1,21 @@
+# Binary
+hermes-browser
+hermes-browser.exe
+
+# Temp files
+dist/
+tmp/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+/server
