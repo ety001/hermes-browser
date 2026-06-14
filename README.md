@@ -208,7 +208,18 @@ Where:
 - `<SERVER_IP>` — the IP address of the machine running the MCP Server and Chrome
 - `<TOKEN>` — the token from the config file on the browser machine
 
-### 6. Verify
+### 6. Install Skill (optional)
+
+Copy `SKILL.md` to Hermes Agent's skills directory so the agent knows when and how to use the browser tools:
+
+```bash
+mkdir -p ~/.hermes/skills/hermes-browser
+cp SKILL.md ~/.hermes/skills/hermes-browser/
+```
+
+After installing, restart Hermes Agent or reload skills. The agent will then prefer `mcp_hermes_browser_*` tools over the built-in `browser_*` tools.
+
+### 7. Verify
 
 ```bash
 # Health check (no auth required)
@@ -339,6 +350,7 @@ make clean      # remove binary
 ├── configs/
 │   ├── config.yaml                # Dev config (auto-generated token)
 │   └── deploy.yaml                # Deployment config (fixed token)
+├── SKILL.md                       # Hermes Agent skill definition
 ├── Makefile
 └── README.md
 ```

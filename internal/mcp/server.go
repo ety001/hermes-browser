@@ -8,9 +8,10 @@ import (
 
 // Server wraps the MCP server and provides browser control tools.
 type Server struct {
-	cfg  *config.Config
-	hub  *ws.Hub
-	mcpS *server.MCPServer
+	cfg      *config.Config
+	hub      *ws.Hub
+	mcpS     *server.MCPServer
+	lastTabID int  // last tab created/opened by navigate or new_tab
 }
 
 // NewServer creates a new MCP Server instance, registering all tools.
@@ -41,8 +42,7 @@ func (s *Server) IsExtensionConnected() bool {
 }
 
 // getActiveTabID resolves the target tab ID from request arguments.
-// If tab_id is provided, it is used directly. Otherwise, the active tab
-// is queried from the Extension.
+// Priority: explicit tab_id arg > lastTabID (from navigate/new_tab) > active tab.
 func (s *Server) getActiveTabID(args map[string]any) (int, error) {
 	if tabID, ok := args["tab_id"]; ok {
 		if id, ok := tabID.(float64); ok {
@@ -50,7 +50,12 @@ func (s *Server) getActiveTabID(args map[string]any) (int, error) {
 		}
 	}
 
-	// Query the active tab from the Extension
+	// Use the tab opened by the most recent navigate/new_tab call
+	if s.lastTabID != 0 {
+		return s.lastTabID, nil
+	}
+
+	// Fallback: query the active tab from the Extension
 	resp, err := s.hub.SendCommand(ws.MethodListTabs, nil, 0)
 	if err != nil {
 		return 0, err

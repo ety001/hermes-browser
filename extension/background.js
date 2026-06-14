@@ -381,25 +381,34 @@ async function handleNavigate(tabId, params) {
     return { url: tab.url, title: tab.title };
 }
 
-function waitForTabComplete(tabId, timeoutMs = 60000) {
+function waitForTabComplete(tabId, timeoutMs = 30000) {
     return new Promise((resolve, reject) => {
-        // Check current status
-        chrome.tabs.get(tabId).then(tab => {
-            if (tab.status === 'complete') {
-                resolve();
-                return;
-            }
-        });
-
+        let resolved = false;
         const listener = (updatedTabId, changeInfo) => {
             if (updatedTabId === tabId && changeInfo.status === 'complete') {
+                if (resolved) return;
+                resolved = true;
                 chrome.tabs.onUpdated.removeListener(listener);
+                clearTimeout(timer);
                 resolve();
             }
         };
         chrome.tabs.onUpdated.addListener(listener);
 
-        setTimeout(() => {
+        // Check current status (async — may race with listener, hence the flag)
+        chrome.tabs.get(tabId).then(tab => {
+            if (resolved) return;
+            if (tab.status === 'complete') {
+                resolved = true;
+                chrome.tabs.onUpdated.removeListener(listener);
+                clearTimeout(timer);
+                resolve();
+            }
+        });
+
+        const timer = setTimeout(() => {
+            if (resolved) return;
+            resolved = true;
             chrome.tabs.onUpdated.removeListener(listener);
             reject({ code: 'TIMEOUT', message: `Navigation timeout after ${timeoutMs}ms` });
         }, timeoutMs);
@@ -470,8 +479,21 @@ async function handleSwitchTab(tabId) {
 }
 
 async function handleNewTab(params) {
-    const tab = await chrome.tabs.create({ url: params.url || 'about:blank' });
-    return { tab_id: tab.id, url: tab.url, title: tab.title };
+    const { url, wait_until = 'networkidle', timeout } = params;
+    const tab = await chrome.tabs.create({ url: url || 'about:blank' });
+
+    // When a URL is provided, wait for the page to load so that the
+    // navigate tool (which reuses new_tab) gets a fully-loaded page.
+    if (url) {
+        const timeoutMs = timeout || 30000;
+        await waitForTabComplete(tab.id, timeoutMs);
+        if (wait_until === 'networkidle') {
+            await new Promise(r => setTimeout(r, 500));
+        }
+    }
+
+    const updatedTab = await chrome.tabs.get(tab.id);
+    return { tab_id: tab.id, url: updatedTab.url, title: updatedTab.title };
 }
 
 async function handleCloseTab(tabId) {

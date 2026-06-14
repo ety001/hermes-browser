@@ -193,11 +193,9 @@ func (s *Server) handleNavigate(ctx context.Context, req mcplib.CallToolRequest)
 		waitUntil = s.cfg.Browser.DefaultWaitUntil
 	}
 
-	tabID, err := s.getActiveTabID(args)
-	if err != nil {
-		return mcplib.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
-	}
-
+	// Always create a new tab for navigation — never hijack the user's
+	// currently active tab.  The new tab becomes active automatically,
+	// so subsequent operations (click, type, get_content, …) target it.
 	params := map[string]any{
 		"url":        url,
 		"wait_until": waitUntil,
@@ -206,7 +204,7 @@ func (s *Server) handleNavigate(ctx context.Context, req mcplib.CallToolRequest)
 		params["timeout"] = timeout
 	}
 
-	resp, err := s.hub.SendCommand("navigate", params, tabID)
+	resp, err := s.hub.SendCommand("new_tab", params, 0)
 	if err != nil {
 		if isNoExtensionError(err) {
 			return mcplib.NewToolResultText("Error: Chrome Extension is not connected. Please check if the Hermes Browser extension is running."), nil
@@ -221,6 +219,11 @@ func (s *Server) handleNavigate(ctx context.Context, req mcplib.CallToolRequest)
 	data, _ := resp.Data.(map[string]any)
 	urlStr, _ := data["url"].(string)
 	title, _ := data["title"].(string)
+	tabID, _ := data["tab_id"].(float64)
+	if tabID > 0 {
+		s.lastTabID = int(tabID) // remember for subsequent ops
+		return mcplib.NewToolResultText(fmt.Sprintf("Navigated to %s (new tab %d)\nTitle: %s", urlStr, int(tabID), title)), nil
+	}
 	return mcplib.NewToolResultText(fmt.Sprintf("Navigated to %s\nTitle: %s", urlStr, title)), nil
 }
 
@@ -587,6 +590,13 @@ func (s *Server) handleNewTab(ctx context.Context, req mcplib.CallToolRequest) (
 
 	if resp.Status == "error" {
 		return mcplib.NewToolResultText(fmt.Sprintf("Error [%s]: %s", resp.Code, resp.Error)), nil
+	}
+
+	// Track the new tab so subsequent ops target it
+	if data, ok := resp.Data.(map[string]any); ok {
+		if tabID, ok := data["tab_id"].(float64); ok && tabID > 0 {
+			s.lastTabID = int(tabID)
+		}
 	}
 
 	return mcplib.NewToolResultText(fmt.Sprintf("New tab: %v", resp.Data)), nil

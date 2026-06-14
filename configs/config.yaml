@@ -1,6 +1,6 @@
 # Hermes Browser MCP Server Configuration
 # Token (set a fixed value, or leave empty to auto-generate)
-# token: "change-me"
+token: "hermes-browser-deploy-token-2025"
 
 # MCP Server HTTP transport
 server:
