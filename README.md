@@ -158,7 +158,58 @@ WebSocket server listening on 127.0.0.1:19876
 MCP HTTP server listening on 0.0.0.0:19875
 ```
 
-### 3. Load Chrome Extension (on browser machine)
+### 3. Run as a systemd user service (recommended)
+
+To auto-start on boot and survive crashes, set up a user-level systemd service.
+
+**Create the service file:**
+
+```bash
+mkdir -p ~/.config/systemd/user
+cat > ~/.config/systemd/user/hermes-browser.service << 'EOF'
+[Unit]
+Description=Hermes Browser MCP Server
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/Apps/hermes-browser/hermes-browser -c %h/Apps/hermes-browser/configs/deploy.yaml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+```
+
+> Adjust the `ExecStart` path to match your binary and config locations (e.g. `%h/hermes-browser/hermes-browser`).
+
+**Enable lingering (start services at boot without logging in):**
+
+```bash
+loginctl enable-linger $USER
+```
+
+**Enable and start:**
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now hermes-browser.service
+```
+
+**Verify:**
+
+```bash
+systemctl --user status hermes-browser.service
+ss -tlnp | grep -E '19875|19876'
+```
+
+> **Manual start (alternative):** If you don't want systemd, you can still run manually:
+> ```bash
+> cd ~/hermes-browser && nohup ./hermes-browser -c configs/deploy.yaml > /tmp/hermes-browser.log 2>&1 &
+> ```
+
+### 4. Load Chrome Extension (on browser machine)
 
 1. Open `chrome://extensions/`
 2. Enable **Developer mode** (top‑right toggle)
@@ -168,7 +219,7 @@ MCP HTTP server listening on 0.0.0.0:19875
 
 > After updating extension files: always click the 🔄 reload button on `chrome://extensions/`.
 
-### 4. Connect Extension to Server
+### 5. Connect Extension to Server
 
 1. Click the Hermes Browser icon in the Chrome toolbar
 2. **WebSocket address:** `ws://127.0.0.1:19876`
@@ -176,7 +227,7 @@ MCP HTTP server listening on 0.0.0.0:19875
 4. Click **Connect**
 5. Status dot turns **green**
 
-### 5. Configure Hermes
+### 6. Configure Hermes
 
 Run this on the machine where Hermes is installed:
 
@@ -208,7 +259,7 @@ Where:
 - `<SERVER_IP>` — the IP address of the machine running the MCP Server and Chrome
 - `<TOKEN>` — the token from the config file on the browser machine
 
-### 6. Install Skill (optional)
+### 7. Install Skill (optional)
 
 Copy `SKILL.md` to Hermes Agent's skills directory so the agent knows when and how to use the browser tools:
 
@@ -219,7 +270,7 @@ cp SKILL.md ~/.hermes/skills/hermes-browser/
 
 After installing, restart Hermes Agent or reload skills. The agent will then prefer `mcp_hermes_browser_*` tools over the built-in `browser_*` tools.
 
-### 7. Verify
+### 8. Verify
 
 ```bash
 # Health check (no auth required)
