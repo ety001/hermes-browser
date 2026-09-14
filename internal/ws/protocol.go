@@ -38,6 +38,8 @@ const (
 	MethodNewTab         = "new_tab"
 	MethodHover          = "hover"
 	MethodSelectOption   = "select_option"
+	MethodLockTab        = "lock_tab"
+	MethodUnlockTab      = "unlock_tab"
 )
 
 // Error codes for typed error responses.

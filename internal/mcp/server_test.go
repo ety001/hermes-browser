@@ -43,6 +43,7 @@ func TestAllToolsRegistered(t *testing.T) {
 		"navigate", "screenshot", "get_content", "click", "type",
 		"scroll", "execute_js", "wait_for", "get_cookies", "list_tabs",
 		"switch_tab", "close_tab", "new_tab", "hover", "select_option",
+		"lock_tab", "unlock_tab",
 	}
 
 	if len(tools) != len(expectedTools) {
@@ -172,6 +173,7 @@ func TestToolNamesMatchWSMethods(t *testing.T) {
 		"wait_for": true, "get_cookies": true, "list_tabs": true,
 		"switch_tab": true, "close_tab": true, "new_tab": true,
 		"hover": true, "select_option": true,
+		"lock_tab": true, "unlock_tab": true,
 	}
 
 	s := newTestServer()

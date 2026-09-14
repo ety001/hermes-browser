@@ -99,6 +99,7 @@ func TestMethodConstants(t *testing.T) {
 		MethodType, MethodScroll, MethodExecuteJS, MethodWaitFor,
 		MethodGetCookies, MethodListTabs, MethodSwitchTab, MethodCloseTab,
 		MethodNewTab, MethodHover, MethodSelectOption,
+		MethodLockTab, MethodUnlockTab,
 	}
 	for _, m := range methods {
 		if m == "" {

@@ -12,6 +12,7 @@ type Server struct {
 	hub      *ws.Hub
 	mcpS     *server.MCPServer
 	lastTabID int  // last tab created/opened by navigate or new_tab
+	lockedTabID int // when non-zero, ALL operations are confined to this tab
 }
 
 // NewServer creates a new MCP Server instance, registering all tools.
@@ -42,8 +43,13 @@ func (s *Server) IsExtensionConnected() bool {
 }
 
 // getActiveTabID resolves the target tab ID from request arguments.
-// Priority: explicit tab_id arg > lastTabID (from navigate/new_tab) > active tab.
+// Priority: tab lock > explicit tab_id arg > lastTabID (from navigate/new_tab) > active tab.
 func (s *Server) getActiveTabID(args map[string]any) (int, error) {
+	// Tab lock wins over everything: all operations stay confined.
+	if s.lockedTabID != 0 {
+		return s.lockedTabID, nil
+	}
+
 	if tabID, ok := args["tab_id"]; ok {
 		if id, ok := tabID.(float64); ok {
 			return int(id), nil
@@ -98,4 +104,6 @@ func (s *Server) registerTools() {
 	s.mcpS.AddTool(newTabTool, s.handleNewTab)
 	s.mcpS.AddTool(hoverTool, s.handleHover)
 	s.mcpS.AddTool(selectOptionTool, s.handleSelectOption)
+	s.mcpS.AddTool(lockTabTool, s.handleLockTab)
+	s.mcpS.AddTool(unlockTabTool, s.handleUnlockTab)
 }

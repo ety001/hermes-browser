@@ -15,12 +15,19 @@ let reconnectTimer = null;
 // Tabs that have been injected with content script
 const injectedTabs = new Set();
 
+// Tab lock: when non-zero, ALL commands are confined to this tab.
+// Prevents the agent from hijacking the user's active tab or spawning tabs.
+let lockedTabID = 0;
+
 // Commands that are handled directly in background (not forwarded to content script)
 const BACKGROUND_METHODS = new Set([
     'navigate', 'screenshot', 'list_tabs', 'switch_tab',
-    'new_tab', 'close_tab', 'get_cookies',
+    'new_tab', 'close_tab', 'get_cookies', 'lock_tab', 'unlock_tab',
     'execute_js',  // handled via MAIN world injection to bypass CSP
 ]);
+
+// Commands exempt from tab-lock enforcement
+const LOCK_IMMUNE_METHODS = new Set(['list_tabs', 'lock_tab', 'unlock_tab']);
 
 // ─── WebSocket Connection ─────────────────────────────────────────────────
 
@@ -251,8 +258,34 @@ function handleMessage(message) {
     }
 }
 
+// Resolve the effective tab for a command, enforcing the tab lock.
+// Returns { ok: true, tabId } or { ok: false, error }.
+function resolveLockedTab(method, requestedTabId) {
+    if (lockedTabID === 0 || LOCK_IMMUNE_METHODS.has(method)) {
+        return { ok: true, tabId: requestedTabId };
+    }
+    if (method === 'new_tab') {
+        return {
+            ok: false,
+            error: { code: 'TAB_LOCKED', message: `Tab lock active (tab ${lockedTabID}). new_tab is disabled — use navigate to load a URL inside the locked tab, or unlock_tab first.` },
+        };
+    }
+    // All other commands are pinned to the locked tab. An explicit tab_id
+    // pointing elsewhere is overridden (lock wins) rather than rejected,
+    // so agents that pass tab_id around still behave correctly.
+    return { ok: true, tabId: lockedTabID };
+}
+
 async function handleBackgroundCommand(id, method, params, tabId) {
     try {
+        // Enforce tab lock before dispatching
+        const resolved = resolveLockedTab(method, tabId);
+        if (!resolved.ok) {
+            sendToServer({ id, status: 'error', code: resolved.error.code, error: resolved.error.message });
+            return;
+        }
+        tabId = resolved.tabId;
+
         let data;
         switch (method) {
             case 'navigate':
@@ -276,6 +309,12 @@ async function handleBackgroundCommand(id, method, params, tabId) {
             case 'get_cookies':
                 data = await handleGetCookies(tabId, params);
                 break;
+            case 'lock_tab':
+                data = await handleLockTab(params);
+                break;
+            case 'unlock_tab':
+                data = await handleUnlockTab();
+                break;
             case 'execute_js':
                 data = await handleExecuteJs(tabId, params);
                 break;
@@ -292,7 +331,14 @@ async function handleBackgroundCommand(id, method, params, tabId) {
 
 async function forwardToContentScript(id, method, params, tabId) {
     try {
-        await ensureTabActive(tabId);
+        // Enforce tab lock before dispatching
+        const resolved = resolveLockedTab(method, tabId);
+        if (!resolved.ok) {
+            sendToServer({ id, status: 'error', code: resolved.error.code, error: resolved.error.message });
+            return;
+        }
+        tabId = resolved.tabId;
+
         await ensureContentScript(tabId);
 
         const response = await chrome.tabs.sendMessage(tabId, {
@@ -323,17 +369,9 @@ function sendToServer(response) {
 
 // ─── Tab Management ───────────────────────────────────────────────────────
 
-async function ensureTabActive(tabId) {
-    if (!tabId) return;
-    const tab = await chrome.tabs.get(tabId);
-    if (!tab.active) {
-        await chrome.tabs.update(tabId, { active: true });
-        // Brief wait for activeTab permission to take effect
-        await new Promise(r => setTimeout(r, 100));
-    }
-}
-
-// ─── Content Script Injection ─────────────────────────────────────────────
+// NOTE: ensureTabActive has been removed. chrome.scripting.executeScript
+// works on non-active tabs (host_permissions covers <all_urls>), so content
+// operations no longer steal focus from the user's active tab.
 
 async function ensureContentScript(tabId) {
     if (injectedTabs.has(tabId)) return;
@@ -349,6 +387,11 @@ async function ensureContentScript(tabId) {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
     injectedTabs.delete(tabId);
+    // Auto-release the lock if the locked tab is closed
+    if (lockedTabID === tabId) {
+        console.log('[Hermes] Locked tab closed — lock released');
+        lockedTabID = 0;
+    }
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
@@ -418,9 +461,24 @@ function waitForTabComplete(tabId, timeoutMs = 30000) {
 async function handleScreenshot(tabId, params) {
     const { format = 'jpeg', quality = 80, selector } = params;
 
-    await ensureTabActive(tabId);
+    if (!tabId) {
+        // captureVisibleTab has no explicit tab targeting — without a
+        // resolved tab we would silently screenshot the user's active tab.
+        throw {
+            code: 'NO_TAB',
+            message: 'screenshot requires a tab_id (or lock_tab first). Refusing to guess the user\'s active tab.',
+        };
+    }
 
     const tab = await chrome.tabs.get(tabId);
+    if (!tab.active) {
+        // captureVisibleTab can only capture the visible tab of a window.
+        // Do NOT auto-activate (would steal user focus) — report instead.
+        throw {
+            code: 'TAB_NOT_VISIBLE',
+            message: `Tab ${tabId} is not the visible tab in its window. Switch to it (switch_tab or manually) before taking a screenshot.`,
+        };
+    }
     const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
         format,
         quality,
@@ -528,13 +586,43 @@ async function handleGetCookies(tabId, params) {
     }));
 }
 
+// ─── Tab Lock ─────────────────────────────────────────────────────────────
+
+async function handleLockTab(params) {
+    let tabId = params.tab_id;
+
+    // Explicit tab_id
+    if (typeof tabId === 'number' && tabId > 0) {
+        const tab = await chrome.tabs.get(tabId); // throws if not found
+        lockedTabID = tabId;
+        return { locked: true, tab_id: lockedTabID, url: tab.url, title: tab.title };
+    }
+
+    // No tab_id: lock the tab the user is currently looking at
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) throw { code: 'NO_TAB', message: 'No active tab found to lock' };
+    lockedTabID = tab.id;
+    return { locked: true, tab_id: lockedTabID, url: tab.url, title: tab.title };
+}
+
+async function handleUnlockTab() {
+    const previous = lockedTabID;
+    lockedTabID = 0;
+    return { locked: false, previous_tab_id: previous };
+}
+
 // ─── Execute JS (MAIN world injection to bypass CSP) ─────────────────────
 
 async function handleExecuteJs(tabId, params) {
     const { expression, return_value = true } = params;
     if (!expression) throw { code: 'JS_EXECUTION_ERROR', message: 'expression is required' };
 
-    await ensureTabActive(tabId);
+    if (!tabId) {
+        throw {
+            code: 'NO_TAB',
+            message: 'execute_js requires a tab_id (or lock_tab first). Refusing to guess the user\'s active tab.',
+        };
+    }
 
     try {
         // Inject into MAIN world to bypass page CSP restrictions on eval.

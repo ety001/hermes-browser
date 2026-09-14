@@ -179,6 +179,17 @@ var selectOptionTool = mcplib.NewTool("select_option",
 	),
 )
 
+var lockTabTool = mcplib.NewTool("lock_tab",
+	mcplib.WithDescription("Lock the agent onto a specific tab. ALL subsequent operations (navigate, click, type, get_content, execute_js, screenshot, ...) are confined to this tab: navigate loads URLs inside it instead of opening new tabs, new_tab is rejected, and the user's other tabs are never touched. Workflow: call list_tabs first, ask the user which tab to use (or pick the most relevant one), then lock it. Remember to unlock_tab when done."),
+	mcplib.WithNumber("tab_id",
+		mcplib.Description("Tab ID to lock onto (from list_tabs). If omitted, locks the user's currently visible tab."),
+	),
+)
+
+var unlockTabTool = mcplib.NewTool("unlock_tab",
+	mcplib.WithDescription("Release the tab lock set by lock_tab, restoring normal behavior (navigate opens new tabs again)."),
+)
+
 // Handler implementations ----------------------------------------------------
 
 func (s *Server) handleNavigate(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -196,12 +207,33 @@ func (s *Server) handleNavigate(ctx context.Context, req mcplib.CallToolRequest)
 	// Always create a new tab for navigation — never hijack the user's
 	// currently active tab.  The new tab becomes active automatically,
 	// so subsequent operations (click, type, get_content, …) target it.
+	//
+	// EXCEPTION: when a tab lock is active, navigate loads the URL inside
+	// the locked tab instead of spawning a new one.
 	params := map[string]any{
 		"url":        url,
 		"wait_until": waitUntil,
 	}
 	if timeout, ok := args["timeout"].(float64); ok && timeout > 0 {
 		params["timeout"] = timeout
+	}
+
+	if s.lockedTabID != 0 {
+		params["wait_until"] = waitUntil
+		resp, err := s.hub.SendCommand("navigate", params, s.lockedTabID)
+		if err != nil {
+			if isNoExtensionError(err) {
+				return mcplib.NewToolResultText("Error: Chrome Extension is not connected. Please check if the Hermes Browser extension is running."), nil
+			}
+			return mcplib.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
+		}
+		if resp.Status == "error" {
+			return mcplib.NewToolResultText(fmt.Sprintf("Error [%s]: %s", resp.Code, resp.Error)), nil
+		}
+		data, _ := resp.Data.(map[string]any)
+		urlStr, _ := data["url"].(string)
+		title, _ := data["title"].(string)
+		return mcplib.NewToolResultText(fmt.Sprintf("Navigated to %s (locked tab %d)\nTitle: %s", urlStr, s.lockedTabID, title)), nil
 	}
 
 	resp, err := s.hub.SendCommand("new_tab", params, 0)
@@ -575,8 +607,58 @@ func (s *Server) handleCloseTab(ctx context.Context, req mcplib.CallToolRequest)
 	return mcplib.NewToolResultText(fmt.Sprintf("Closed tab %d", tabID)), nil
 }
 
+// handleLockTab pins all subsequent operations to one tab.
+func (s *Server) handleLockTab(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	args := req.GetArguments()
+
+	// Explicit tab_id from the agent
+	if tabID, ok := args["tab_id"].(float64); ok && tabID > 0 {
+		s.lockedTabID = int(tabID)
+		// Sync the extension's local lock state (best-effort).
+		_, _ = s.hub.SendCommand("lock_tab", map[string]any{"tab_id": float64(s.lockedTabID)}, 0)
+		return mcplib.NewToolResultText(fmt.Sprintf("Tab locked: %d. All operations are now confined to this tab. new_tab is disabled; navigate loads URLs inside it.", s.lockedTabID)), nil
+	}
+
+	// No tab_id: lock the user's currently visible tab (extension resolves it)
+	resp, err := s.hub.SendCommand("lock_tab", map[string]any{}, 0)
+	if err != nil {
+		return mcplib.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
+	}
+	if resp.Status == "error" {
+		return mcplib.NewToolResultText(fmt.Sprintf("Error [%s]: %s", resp.Code, resp.Error)), nil
+	}
+
+	data, _ := resp.Data.(map[string]any)
+	if id, ok := data["tab_id"].(float64); ok && id > 0 {
+		s.lockedTabID = int(id)
+		title, _ := data["title"].(string)
+		urlStr, _ := data["url"].(string)
+		return mcplib.NewToolResultText(fmt.Sprintf("Tab locked: %d (%s — %s). All operations are now confined to this tab. new_tab is disabled; navigate loads URLs inside it.", s.lockedTabID, title, urlStr)), nil
+	}
+	return mcplib.NewToolResultText("Error: extension did not report a locked tab id"), nil
+}
+
+// handleUnlockTab releases the tab lock.
+func (s *Server) handleUnlockTab(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	previous := s.lockedTabID
+	s.lockedTabID = 0
+	if previous != 0 {
+		// Inform the extension so its local lock state matches.
+		_, _ = s.hub.SendCommand("unlock_tab", map[string]any{}, 0)
+		return mcplib.NewToolResultText(fmt.Sprintf("Tab unlocked (was %d). navigate opens new tabs again.", previous)), nil
+	}
+	return mcplib.NewToolResultText("No tab lock was active."), nil
+}
+
 func (s *Server) handleNewTab(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 	args := req.GetArguments()
+
+	// Tab lock: refuse to spawn tabs — the whole point of the lock is to
+	// stop the agent from opening one tab after another.
+	if s.lockedTabID != 0 {
+		return mcplib.NewToolResultText(fmt.Sprintf(
+			"Error [TAB_LOCKED]: Tab lock is active (tab %d). new_tab is disabled — use navigate to load a URL inside the locked tab, or call unlock_tab first.", s.lockedTabID)), nil
+	}
 
 	params := map[string]any{}
 	if url, ok := args["url"].(string); ok {
