@@ -38,7 +38,15 @@ type WSConfig struct {
 	Bind              string   `yaml:"bind"`
 	Token             string   `yaml:"token"`
 	AllowedExtensions []string `yaml:"allowed_extensions"`
+	// ReadLimit is the max size in bytes of a single WebSocket message
+	// received from the Extension. Screenshots are returned as base64
+	// images (multi-MB), so this must be far above the library default
+	// of 32KB.
+	ReadLimit int64 `yaml:"read_limit"`
 }
+
+// DefaultWSReadLimit allows ~64MB messages (base64 screenshots are large).
+const DefaultWSReadLimit = 64 << 20
 
 // BrowserConfig holds default browser operation settings.
 type BrowserConfig struct {
@@ -99,6 +107,11 @@ func Load() (*Config, error) {
 
 	// Apply environment variable overrides
 	cfg.applyEnvOverrides()
+
+	// WebSocket read limit: 0 means "not configured" — apply default.
+	if cfg.WebSocket.ReadLimit == 0 {
+		cfg.WebSocket.ReadLimit = DefaultWSReadLimit
+	}
 
 	// Resolve tokens
 	if err := cfg.resolveTokens(); err != nil {

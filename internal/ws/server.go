@@ -38,12 +38,19 @@ func StartServer(ctx context.Context, cfg *config.Config, hub *Hub) *http.Server
 		// WebSocket upgrade
 		conn, err := wslib.Accept(w, r, &wslib.AcceptOptions{
 			InsecureSkipVerify: true, // Allow any origin during handshake;
-			                        // app-level origin check above handles auth.
+			                          // app-level origin check above handles auth.
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "WebSocket accept error: %v\n", err)
 			return
 		}
+
+		// CRITICAL: raise the read limit. coder/websocket defaults to 32KB
+		// per message, but screenshot responses carry multi-MB base64
+		// images. Without this, any large response trips the limit, the
+		// connection is torn down, and every pending request fails with
+		// NO_EXTENSION_CONNECTED (observed: every screenshot call).
+		conn.SetReadLimit(cfg.WebSocket.ReadLimit)
 
 		// Create client and register with hub
 		NewClient(ctx, conn, hub)

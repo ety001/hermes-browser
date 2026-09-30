@@ -104,11 +104,20 @@ func (h *Hub) UnregisterClient(client *Client) {
 	if h.client == client {
 		h.client = nil
 		for id, ch := range h.responses {
-			ch <- Response{
+			// Non-blocking send: a response may already occupy the buffered
+			// channel (capacity 1). Blocking here while holding the write
+			// lock would deadlock the entire Hub — every subsequent command
+			// would hang forever on h.mu.Lock().
+			select {
+			case ch <- Response{
 				ID:     id,
 				Status: "error",
 				Code:   ErrCodeNoExtensionConnected,
 				Error:  "Extension disconnected",
+			}:
+			default:
+				// Channel full — the pending request already got its real
+				// response; nothing to deliver.
 			}
 		}
 	}

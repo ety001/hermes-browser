@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 )
@@ -568,8 +570,21 @@ func (s *Server) handleListTabs(ctx context.Context, req mcplib.CallToolRequest)
 func (s *Server) handleSwitchTab(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 	args := req.GetArguments()
 
-	tabID, ok := args["tab_id"].(float64)
-	if !ok || tabID == 0 {
+	// tab_id may arrive as float64 (JSON number) or string: list_tabs output
+	// is Go-formatted text, so agents often echo IDs back as strings like
+	// "1.975625249e+09" or "1975625249". Accept both.
+	var tabID float64
+	switch v := args["tab_id"].(type) {
+	case float64:
+		tabID = v
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil {
+			return mcplib.NewToolResultError(fmt.Sprintf("tab_id is not a valid number: %q", v)), nil
+		}
+		tabID = parsed
+	}
+	if tabID == 0 {
 		return mcplib.NewToolResultError("tab_id is required"), nil
 	}
 

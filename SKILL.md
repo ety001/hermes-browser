@@ -87,6 +87,35 @@ asyncio.run(main())
 | `hover` | `{"selector": "..."}` | 鼠标悬停 |
 | `select_option` | `{"selector": "...", "value": "..."}` | 选择下拉选项 |
 
+## 故障排查
+
+### 截图报 `NO_EXTENSION_CONNECTED`（2026-09-30 已修复）
+
+根因：服务端 `internal/ws/server.go` 未调用 `conn.SetReadLimit()`，coder/websocket 默认单条消息上限 32KB。截图响应是整屏 base64 图片（数 MB），扩展一发送服务端就超限拆连接，所有 pending 请求报 NO_EXTENSION_CONNECTED，几秒后扩展自动重连——表现为"截图必断连、其他命令正常"。
+
+修复（服务端，已部署）：
+- `internal/config/config.go`：WSConfig 增加 `read_limit`（yaml 可配），默认 64MB（`DefaultWSReadLimit`）
+- `internal/ws/server.go`：`wslib.Accept()` 后调用 `conn.SetReadLimit(cfg.WebSocket.ReadLimit)`
+
+若将来又出现"大响应必断连"，优先检查：是否重置了 read limit、响应体是否超过所设上限。
+
+### Hub 死锁隐患（2026-09-30 已修复）
+
+`internal/ws/hub.go` 的 `UnregisterClient` 原先持写锁做阻塞式 `ch <-`（channel 容量 1）。若断连瞬间 pending 请求已收到真实响应，会永久死锁整个 Hub（后续所有命令挂起）。已改为非阻塞 `select` + `default`。
+
+### `switch_tab` 报 `tab_id is required`（2026-09-30 已修复）
+
+`list_tabs` 返回 Go 格式化文本，tab_id 形如 `1.975625249e+09`，agent 原样回传时是字符串，`args["tab_id"].(float64)` 断言失败。现在 `handleSwitchTab` 同时接受 number 和字符串（含科学计数法，`strconv.ParseFloat` 解析）。
+
+### 扩展端无需重载的边界
+
+上述修复全部在服务端（Go 二进制），`extension/` 未改动，更新服务不需要在 `chrome://extensions/` 刷新扩展。只有改 `background.js`/`content.js`/`manifest.json` 才需要用户手动刷新扩展。
+
+### 何时仍会出现 `Extension disconnected`
+
+- 扩展端**主动重连**时的固有窗口：MCP 服务重启后，扩展指数退避重连（1s/2s/4s...，上限 30s），期间命令报 NO_EXTENSION_CONNECTED，等 5-10 秒自动恢复，可用 `ss -tnp | grep 19876` 看 ESTAB 确认。
+- 瞬时断连：某条命令报断连、紧接着下一条正常——直接重试原命令即可，不必升级排障。
+
 ## 注意事项
 
 1. **安装 mcp 包**：如果 import 失败，先安装 MCP SDK：`pip install mcp`
