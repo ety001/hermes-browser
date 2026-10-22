@@ -2,6 +2,8 @@ module github.com/ety001/hermes-browser
 
 go 1.26.3
 
+toolchain go1.27.3
+
 require (
 	github.com/coder/websocket v1.8.14
 	github.com/google/uuid v1.6.0
